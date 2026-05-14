@@ -34,6 +34,20 @@ button:disabled{opacity:.45}
 .candidates{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .cand{background:#020617;border:1px solid #334155;color:#cbd5e1;padding:6px 9px;border-radius:999px;font-size:12px}
 .uploadState{margin-top:10px;color:#cbd5e1;font-size:13px}
+.grid{grid-template-columns:repeat(auto-fit,minmax(340px,1fr));align-items:stretch}
+.card{display:flex;flex-direction:column;min-height:620px}
+.preview{height:330px;display:block;border-bottom:1px solid #334155}
+.body{display:flex;flex:1;flex-direction:column;gap:10px;padding:14px 16px 16px}
+.details{display:grid;gap:6px}
+.row{grid-template-columns:90px minmax(0,1fr);align-items:start;margin:0;min-height:22px}
+.row>div:last-child{min-width:0;overflow-wrap:anywhere;font-weight:600}
+.chooseBlock{margin-top:auto;display:grid;gap:8px;padding-top:4px}
+.chooseTitle{color:#cbd5e1;font-size:14px}
+.candidates{min-height:32px;margin-top:0;align-content:flex-start}
+.cand{margin:0;min-height:30px;display:inline-flex;align-items:center}
+.peaInput{margin-top:0;height:48px;font-weight:700;font-family:Arial,sans-serif}
+.uploadState{min-height:22px;margin-top:2px;display:flex;align-items:center}
+@media(max-width:760px){body{padding:12px}.grid{grid-template-columns:1fr}.card{min-height:0}.preview{height:360px}}
 </style>
 </head>
 <body>
@@ -177,16 +191,20 @@ function renderCard(r) {
   div.innerHTML = `
     <img class="preview" src="${r.preview}" alt="${r.file.name}" onclick="openLightboxByIndex(${r.idx})">
     <div class="body">
-      <div class="row"><div class="label">ไฟล์เดิม</div><div>${r.file.name}</div></div>
-      <div class="row"><div class="label">Barcode</div><div>${r.barcode || '-'}</div></div>
-      <div class="row"><div class="label">OCR</div><div>${r.ocr || '-'}</div></div>
-      <div class="row"><div class="label">สถานะ</div><div><span class="tag ${r.cls}">${r.status}</span></div></div>
-      <div class="label">เลือกเลข หรือแก้เองก่อน Upload</div>
-      <div class="candidates">
-        ${cands.map(n => `<button class="cand" onclick="setPea(${r.idx}, '${n}')">${n}</button>`).join('')}
+      <div class="details">
+        <div class="row"><div class="label">ไฟล์เดิม</div><div>${r.file.name}</div></div>
+        <div class="row"><div class="label">Barcode</div><div>${r.barcode || '-'}</div></div>
+        <div class="row"><div class="label">OCR</div><div>${r.ocr || '-'}</div></div>
+        <div class="row"><div class="label">สถานะ</div><div><span class="tag ${r.cls}">${r.status}</span></div></div>
       </div>
-      <input class="peaInput" id="pea-${r.idx}" value="${r.final}" placeholder="ใส่เลข PEA">
-      <div class="uploadState" id="up-${r.idx}">ยังไม่ได้ Upload</div>
+      <div class="chooseBlock">
+        <div class="chooseTitle">เลือกเลข หรือแก้เองก่อน Upload</div>
+        <div class="candidates">
+          ${cands.map(n => `<button class="cand" onclick="setPea(${r.idx}, '${n}')">${n}</button>`).join('')}
+        </div>
+        <input class="peaInput" id="pea-${r.idx}" value="${r.final}" placeholder="ใส่เลข PEA">
+        <div class="uploadState" id="up-${r.idx}">ยังไม่ได้ Upload</div>
+      </div>
     </div>
   `;
   grid.appendChild(div);
