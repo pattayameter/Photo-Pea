@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PEA Photo Renamer · One Photo One Result</title>
+
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/browser@latest"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+<style>
+:root{--bg:#0f172a;--card:#111827;--line:#1e293b;--t:#e5e7eb;--muted:#94a3b8;--blue:#0ea5e9;--green:#22c55e;--amber:#f59e0b;--red:#ef4444}
+*{box-sizing:border-box}
+body{font-family:Arial,sans-serif;background:var(--bg);color:var(--t);margin:0;padding:16px}
+.wrap{max-width:1180px;margin:auto}
+h1{font-size:24px;margin:0 0 8px}.desc{color:var(--muted);line-height:1.65;margin-bottom:16px}
+.pick{display:block;background:var(--blue);color:#fff;text-align:center;border-radius:14px;padding:18px;font-weight:bold;font-size:17px;margin-bottom:12px}
+input[type=file]{display:none}
+.actions{display:flex;gap:10px;margin:14px 0;flex-wrap:wrap}
+button{background:#2563eb;color:#fff;border:0;border-radius:10px;padding:12px 16px;font-size:14px}
+button:disabled{opacity:.45}
+.progress{background:var(--card);border-radius:99px;overflow:hidden;margin:12px 0}.bar{height:12px;background:var(--green);width:0%}
+.small{font-size:12px;color:var(--muted);line-height:1.6}
+.note{background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.35);color:#fbbf24;border-radius:12px;padding:12px;margin:12px 0;font-size:13px;line-height:1.7}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-top:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.preview{
+width:100%;
+height:320px;
+object-fit:contain;
+background:#000;
+padding:8px;
+cursor:zoom-in;
+}
+.card-body{padding:12px}
+.row{display:grid;grid-template-columns:88px 1fr;gap:8px;margin:7px 0;font-size:13px}
+.label{color:var(--muted)}.value{word-break:break-all}
+.final-input{width:100%;background:#0b1220;border:1px solid #334155;color:#fff;border-radius:10px;padding:10px;font-size:16px;margin-top:8px}
+.ok{color:var(--green);font-weight:bold}.warn{color:var(--amber);font-weight:bold}.bad{color:var(--red);font-weight:bold}
+.tag{display:inline-block;border-radius:99px;padding:3px 8px;font-size:12px}
+.tag.ok{background:rgba(34,197,94,.12)}.tag.warn{background:rgba(245,158,11,.12)}.tag.bad{background:rgba(239,68,68,.12)}
+.candidates{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.candidate{background:#0b1220;border:1px solid #334155;color:#cbd5e1;border-radius:99px;padding:5px 8px;font-size:12px}
+
+.modal{
+position:fixed;
+inset:0;
+background:rgba(0,0,0,.88);
+display:none;
+align-items:center;
+justify-content:center;
+z-index:9999;
+padding:20px;
+}
+.modal.show{display:flex}
+.modal img{
+max-width:95vw;
+max-height:95vh;
+object-fit:contain;
+border-radius:12px;
+background:#000;
+}
+.closeModal{
+position:absolute;
+top:20px;
+right:20px;
+background:#111827;
+border:1px solid #334155;
+color:#fff;
+border-radius:999px;
+width:44px;
+height:44px;
+font-size:22px;
+}
+
+</style>
+</head>
+
+<body>
+<div class="wrap">
+  <h1>📸 PEA Photo Renamer · One Photo One Result</h1>
+  <div class="desc">
+    เวอร์ชันนี้จะอ่านแต่ละรูปให้จบก่อน แล้วแสดงผล <b>รูปละ 1 การ์ดเท่านั้น</b> ไม่ขึ้นซ้ำหลายใบ
+  </div>
+
+  <label class="pick" for="files">📷 เลือกรูปจาก iPad / Photos</label>
+  <input id="files" type="file" multiple accept="image/*">
+
+  <div class="note">
+    หลักการ: 1 รูป = 1 ผลลัพธ์ · อ่าน Barcode ก่อน · OCR สำรอง · ถ้าไม่มั่นใจให้แก้เลขเองก่อนดาวน์โหลด
+  </div>
+
+  <div class="actions">
+    <button id="startBtn" disabled>เริ่มอ่าน</button>
+    <button id="zipBtn" disabled>ดาวน์โหลด ZIP</button>
+  </div>
+
+  <div class="progress"><div class="bar" id="bar"></div></div>
+  <div class="small" id="status">ยังไม่ได้เลือกรูป</div>
+  <div class="grid" id="cards"></div>
+</div>
+
+<script>
+const input=document.getElementById('files');
+const startBtn=document.getElementById('startBtn');
+const zipBtn=document.getElementById('zipBtn');
+const cards=document.getElementById('cards');
+const bar=document.getElementById('bar');
+const statusEl=document.getElementById('status');
+
+let files=[];
+let results=[];
+
+input.addEventListener('change',e=>{
+  const picked=[...e.target.files];
+
+  // กันไฟล์ซ้ำจาก iPad/Photos
+  const seen=new Set();
+  files=picked.filter(f=>{
+    const key=f.name+'-'+f.size+'-'+f.lastModified;
+    if(seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  startBtn.disabled=files.length===0;
+  statusEl.textContent=files.length+' รูป';
+  cards.innerHTML='';
+  results=[];
+  zipBtn.disabled=true;
+});
+
+function progress(i,total){
+  const pct=total?Math.round(i/total*100):0;
+  bar.style.width=pct+'%';
+  statusEl.textContent=`กำลังอ่าน ${i}/${total} (${pct}%)`;
+}
+
+function numberCandidates(text){
+  const compact=String(text||'').replace(/(?<=\d)\s+(?=\d)/g,'');
+  const nums=compact.match(/\b\d{8,12}\b/g)||[];
+  const uniq=[...new Set(nums)];
+  uniq.sort((a,b)=>{
+    if(a.length===10&&b.length!==10)return -1;
+    if(b.length===10&&a.length!==10)return 1;
+    return b.length-a.length;
+  });
+  return uniq;
+}
+
+function cleanFinal(v){return String(v||'').replace(/\D/g,'').slice(0,12);}
+function extOf(file){return (file.name.split('.').pop()||'jpg').toLowerCase();}
+
+function makeImage(file){
+  return new Promise((resolve,reject)=>{
+    const img=new Image();
+    img.onload=()=>resolve(img);
+    img.onerror=reject;
+    img.src=URL.createObjectURL(file);
+  });
+}
+
+function canvasFromImage(img,crop){
+  const sx=crop.x*img.naturalWidth, sy=crop.y*img.naturalHeight;
+  const sw=crop.w*img.naturalWidth, sh=crop.h*img.naturalHeight;
+  const maxSide=1800;
+  const scale=Math.min(1,maxSide/Math.max(sw,sh));
+  const cw=Math.round(sw*scale), ch=Math.round(sh*scale);
+  const canvas=document.createElement('canvas');
+  canvas.width=cw; canvas.height=ch;
+  const ctx=canvas.getContext('2d');
+  ctx.drawImage(img,sx,sy,sw,sh,0,0,cw,ch);
+  return canvas;
+}
+
+async function readBarcodeOnce(file){
+  try{
+    const reader=new ZXingBrowser.BrowserMultiFormatReader();
+    const url=URL.createObjectURL(file);
+    const res=await reader.decodeFromImageUrl(url);
+    URL.revokeObjectURL(url);
+    const nums=numberCandidates(res.getText());
+    return nums[0]||'';
+  }catch(e){
+    return '';
+  }
+}
+
+async function readOCROnce(file){
+  const img=await makeImage(file);
+
+  // อ่านเฉพาะช่วงที่มักมีเลข PEA + barcode ก่อน ไม่อ่านวนซ้ำเยอะ
+  const crops=[
+    {x:0,y:0,w:1,h:.45},
+    {x:0,y:.35,w:1,h:.35},
+    {x:0,y:0,w:1,h:1}
+  ];
+
+  let all=[];
+  for(const crop of crops){
+    try{
+      const canvas=canvasFromImage(img,crop);
+      const {data:{text}}=await Tesseract.recognize(canvas,'eng',{
+        tessedit_char_whitelist:'0123456789PEApea'
+      });
+      all.push(...numberCandidates(text));
+    }catch(e){}
+  }
+
+  const counts={};
+  all.forEach(n=>counts[n]=(counts[n]||0)+1);
+
+  const sorted=Object.keys(counts).sort((a,b)=>{
+    if(counts[b]!==counts[a]) return counts[b]-counts[a];
+    if(a.length===10&&b.length!==10) return -1;
+    if(b.length===10&&a.length!==10) return 1;
+    return b.length-a.length;
+  });
+
+  return {best:sorted[0]||'', candidates:sorted.slice(0,5)};
+}
+
+function decide(barcode,ocr){
+  if(barcode && ocr && barcode===ocr) return {final:barcode,status:'OK ตรงกัน',cls:'ok'};
+  if(barcode && !ocr) return {final:barcode,status:'ใช้ Barcode',cls:'ok'};
+  if(barcode && ocr && barcode!==ocr) return {final:barcode,status:'เลขไม่ตรง ตรวจเอง',cls:'warn'};
+  if(!barcode && ocr) return {final:ocr,status:'OCR อย่างเดียว ตรวจเอง',cls:'warn'};
+  return {final:'',status:'อ่านไม่ได้',cls:'bad'};
+}
+
+async function processOnePhoto(file,idx){
+  const preview=URL.createObjectURL(file);
+
+  const barcode=await readBarcodeOnce(file);
+  const ocrData=await readOCROnce(file);
+  const decision=decide(barcode,ocrData.best);
+
+  return {
+    idx,file,preview,
+    original:file.name,
+    barcode,
+    ocr:ocrData.best,
+    candidates:ocrData.candidates,
+    final:decision.final,
+    status:decision.status,
+    cls:decision.cls
+  };
+}
+
+function fileNameFor(r){
+  const n=cleanFinal(r.final);
+  if(!n) return 'NEED-CHECK-'+r.original;
+  if(r.cls==='warn') return 'CHECK-'+n+'.'+extOf(r.file);
+  return n+'.'+extOf(r.file);
+}
+
+function renderCard(r){
+  const div=document.createElement('div');
+  div.className='card';
+  div.id='card-'+r.idx;
+
+  const cands=[r.barcode,r.ocr,...r.candidates].filter(Boolean).filter((v,i,a)=>a.indexOf(v)===i);
+
+  div.innerHTML=`
+    <img class="preview" src="${r.preview}">
+    <div class="card-body">
+      <div class="row"><div class="label">ไฟล์เดิม</div><div class="value">${r.original}</div></div>
+      <div class="row"><div class="label">Barcode</div><div class="value">${r.barcode||'-'}</div></div>
+      <div class="row"><div class="label">OCR</div><div class="value">${r.ocr||'-'}</div></div>
+      <div class="row"><div class="label">สถานะ</div><div class="value"><span class="tag ${r.cls}">${r.status}</span></div></div>
+
+      <div class="small">เลือกเลขที่ถูก หรือแก้เองก่อนดาวน์โหลด</div>
+      <div class="candidates">
+        ${cands.map(n=>`<button class="candidate" type="button" onclick="setFinal(${r.idx},'${n}')">${n}</button>`).join('')}
+      </div>
+
+      <input class="final-input" id="final-${r.idx}" value="${r.final||''}" placeholder="ใส่เลข PEA ที่ถูกต้อง">
+      <div class="small" style="margin-top:6px">ชื่อไฟล์ใหม่: <span id="name-${r.idx}">${fileNameFor(r)}</span></div>
+    </div>
+  `;
+  cards.appendChild(div);
+}
+
+function setFinal(idx,n){
+  const inp=document.getElementById('final-'+idx);
+  if(inp){inp.value=n;updateName(idx);}
+}
+
+function updateName(idx){
+  const r=results.find(x=>x.idx===idx);
+  if(!r)return;
+  const inp=document.getElementById('final-'+idx);
+  r.final=cleanFinal(inp&&inp.value);
+  const span=document.getElementById('name-'+idx);
+  if(span)span.textContent=fileNameFor(r);
+}
+
+document.addEventListener('input',e=>{
+  if(e.target.classList.contains('final-input')){
+    const idx=parseInt(e.target.id.replace('final-',''),10);
+    updateName(idx);
+  }
+});
+
+startBtn.addEventListener('click',async()=>{
+  results=[];
+  cards.innerHTML='';
+  zipBtn.disabled=true;
+
+  for(let i=0;i<files.length;i++){
+    progress(i,files.length);
+    const r=await processOnePhoto(files[i],i);
+    results.push(r);
+    renderCard(r); // แสดงแค่ครั้งเดียวต่อรูป
+  }
+
+  progress(files.length,files.length);
+  statusEl.textContent='เสร็จแล้ว '+results.length+' รูป';
+  zipBtn.disabled=false;
+});
+
+zipBtn.addEventListener('click',async()=>{
+  const zip=new JSZip();
+
+  for(const r of results){
+    const inp=document.getElementById('final-'+r.idx);
+    r.final=cleanFinal(inp&&inp.value);
+
+    let name=fileNameFor(r);
+    let base=name.replace(/\.[^.]+$/,'');
+    let ext=name.split('.').pop();
+    let finalName=name;
+    let count=2;
+
+    while(zip.files[finalName]){
+      finalName=base+'-'+count+'.'+ext;
+      count++;
+    }
+
+    zip.file(finalName,r.file);
+  }
+
+  const blob=await zip.generateAsync({type:'blob'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='pea-renamed-one-photo-one-result.zip';
+  a.click();
+});
+</script>
+
+<div class="modal" id="imgModal">
+  <button class="closeModal" onclick="closeModal()">✕</button>
+  <img id="modalImage">
+</div>
+
+
+<script>
+const imgModal=document.getElementById('imgModal');
+const modalImage=document.getElementById('modalImage');
+
+document.addEventListener('click',e=>{
+  if(e.target.classList.contains('preview')){
+    modalImage.src=e.target.src;
+    imgModal.classList.add('show');
+  }
+});
+
+function closeModal(){
+  imgModal.classList.remove('show');
+}
+
+imgModal.addEventListener('click',e=>{
+  if(e.target===imgModal){
+    closeModal();
+  }
+});
+</script>
+
+</body>
+</html>
